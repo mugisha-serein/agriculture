@@ -1,4 +1,4 @@
-﻿# Agriculture Backend
+# Agriculture Backend
 
 Modular monolith Django backend for the AgriMarket platform.
 
@@ -8,22 +8,32 @@ Modular monolith Django backend for the AgriMarket platform.
 - Django REST Framework 3.16.1
 - djangorestframework-simplejwt 5.5.1
 - PostgreSQL (required)
+- Django-Q2 (async tasks)
 
 **Architecture**
-Single deployable backend with strict app boundaries.
+Single deployable backend with strict app boundaries and immutable audit capabilities.
 
-| App | Responsibility | Primary Tables |
+| App | Responsibility | Primary Models / Systems |
 |---|---|---|
-| `users` | Identity, auth, sessions, JWT lifecycle | `users`, `sessions`, `refresh_tokens` |
-| `verification` | KYC submission and admin verification workflow | `user_verifications` |
-| `listings` | Marketplace crops and product listings | `crops`, `products` |
-| `discovery` | Search, ranking, and home content | `search_queries` |
-| `orders` | Order lifecycle and line-item allocation | `orders`, `order_items` |
-| `payments` | Payment initiation and escrow flow | `payments`, `escrow_transactions` |
-| `logistics` | Shipment coordination and tracking | `shipments` |
-| `reputation` | Reviews, ratings, Bayesian reputation aggregation | `reviews` |
-| `audit` | Immutable mutation audit + managed request action audit | `audit_events`, `audit_request_actions` |
-| `dashboard` | Role-specific analytics and activity | Derived analytics |
+| `users` | Identity, RBAC, Security | `User`, `Role`, `UserDevice`, `LoginVerification`, `LoginAttempt`, `IpReputation`, `LoginRateLimit` |
+| `verification` | KYC & Compliance | `UserVerification`, `VerificationDocument`, `VerificationSelfie`, `VerificationReview`, `VerificationStatusLog`, `VerificationFraudCheck` |
+| `listings` | Marketplace Catalog | `Product`, `ProductInventory`, `ProductMedia`, `ProductPricing`, `Crop` |
+| `discovery` | Search & Ranking | Algorithms for relevance and marketplace discovery |
+| `orders` | Order Lifecycle | `Order`, `OrderItem` (line-item allocation) |
+| `payments` | Financial Operations | `Payment` aggregate, `EscrowTransaction` (immutable ledger) |
+| `logistics` | Shipment Tracking | `Shipment` (assignment, tracking, proof of delivery) |
+| `reputation` | Trust & Safety | `Review` (Bayesian reputation aggregation) |
+| `audit` | System Observability | `AuditEvent` (immutable mutations), `AuditRequestAction` (managed actions) |
+| `dashboard` | Analytics | Role-specific derived analytics and marketplace KPIs |
+
+**Security & Data Integrity**
+- **Identity Security**: Brute-force protection, account anomaly detection (device/IP tracking), HIBP password breach checks, and global rate limiting.
+- **RBAC**: Granular role-based access control with dedicated roles for Buyers, Sellers, Transporters, and Admins.
+- **Immutable Audit**: All domain mutations are hashed and chained in an immutable audit log.
+- **Escrow Ledger**: Financial transactions are recorded in an immutable ledger with no deletion/modification allowed.
+
+**Background Processing**
+Asynchronous tasks (OCR, Face Matching, Fraud Detection) are handled by **Django-Q2**. Workers process intensive operations without blocking the request-response cycle.
 
 **Hard Requirements**
 - PostgreSQL is mandatory.
@@ -32,39 +42,37 @@ Single deployable backend with strict app boundaries.
 - SQLite is not supported.
 
 **Environment Variables**
-`core/settings.py` loads variables from `.env` and the process environment.
-
 | Variable | Required | Description |
 |---|---|---|
 | `DJANGO_SECRET_KEY` | Yes | Django signing secret |
 | `DJANGO_DEBUG` | No | `true/false`, default `false` |
-| `DJANGO_ALLOWED_HOSTS` | No | Comma-separated hosts |
 | `POSTGRES_DB` | Yes | PostgreSQL database name |
 | `POSTGRES_USER` | Yes | PostgreSQL user |
 | `POSTGRES_PASSWORD` | Yes | PostgreSQL password |
 | `POSTGRES_HOST` | Yes | PostgreSQL host |
 | `POSTGRES_PORT` | Yes | PostgreSQL port |
 | `POSTGRES_DRIVER` | Yes | Must be `psycopg2` |
-| `POSTGRES_CONN_MAX_AGE` | No | DB persistent connection lifetime (seconds), default `60` |
-| `POSTGRES_SSLMODE` | No | Optional PostgreSQL SSL mode |
-| `JWT_ACCESS_MINUTES` | No | Access token lifetime in minutes, default `15` |
-| `JWT_REFRESH_DAYS` | No | Refresh token lifetime in days, default `7` |
+| `HIBP_ENABLED` | No | Enable HIBP password breach checks |
+| `Q_CLUSTER_WORKERS` | No | Number of async worker processes (default 4) |
 
 **Setup**
 ```powershell
 cd backend
 python -m venv venv
 .\venv\Scripts\activate
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pip install psycopg2-binary
 ```
 
-Create `.env` from `.env.example` and set real secrets/credentials.
+Create `.env` from `.env.example` and set real credentials.
 
-Apply schema:
+Apply migrations:
 ```powershell
 python manage.py migrate
+```
+
+Start background workers:
+```powershell
+python manage.py qcluster
 ```
 
 Run server:
@@ -73,89 +81,22 @@ python manage.py runserver
 ```
 
 **Docker**
-From repo root:
 ```powershell
 docker-compose up --build
 ```
 
 **API Route Index**
-Base route prefixes are configured in `core/urls.py`.
 
-Identity `/api/identity/`
-- `POST register/`
-- `POST activate/`
-- `POST login/`
-- `POST refresh/`
-- `POST logout/`
-- `POST verify/`
+| Domain | Base Path | Key Endpoints |
+|---|---|---|
+| **Identity** | `/api/identity/` | `register/`, `login/`, `verify/` (anomaly check), `refresh/`, `logout/` |
+| **Verification** | `/api/verification/` | `submit/`, `me/`, `admin/pending/`, `admin/review/` |
+| **Marketplace** | `/api/marketplace/` | `crops/`, `products/`, `products/me/`, `products/<id>/` |
+| **Discovery** | `/api/discovery/` | `search/`, `home/` |
+| **Orders** | `/api/orders/` | `POST /`, `GET seller/`, `<id>/confirm/`, `<id>/items/<id>/fulfill/` |
+| **Payments** | `/api/payments/` | `initiate/`, `<id>/release/`, `webhooks/` |
+| **Logistics** | `/api/logistics/` | `shipments/`, `shipments/<id>/assign/`, `confirm-delivery/` |
+| **Reputation** | `/api/reputation/` | `reviews/`, `leaderboard/`, `users/<id>/summary/` |
+| **Audit** | `/api/audit/` | `events/`, `actions/`, `actions/<id>/manage/` |
+| **Dashboard** | `/api/dashboard/` | `stats/` |
 
-Verification `/api/verification/`
-- `POST submit/`
-- `GET me/`
-- `GET admin/pending/`
-- `POST admin/<verification_id>/review/`
-
-Marketplace `/api/marketplace/`
-- `GET,POST crops/`
-- `GET,POST products/`
-- `GET products/me/`
-- `GET,PATCH,DELETE products/<product_id>/`
-
-Discovery `/api/discovery/`
-- `GET search/`
-- `GET home/`
-
-Orders `/api/orders/`
-- `GET,POST /`
-- `GET seller/`
-- `GET <order_id>/`
-- `POST <order_id>/confirm/`
-- `POST <order_id>/cancel/`
-- `POST <order_id>/items/<item_id>/fulfill/`
-
-Payments `/api/payments/`
-- `GET /`
-- `POST initiate/`
-- `POST webhooks/`
-- `GET <payment_id>/`
-- `POST <payment_id>/release/`
-- `POST <payment_id>/refund/`
-
-Logistics `/api/logistics/`
-- `GET,POST shipments/`
-- `GET shipments/<shipment_id>/`
-- `POST shipments/<shipment_id>/assign/`
-- `POST shipments/<shipment_id>/status/`
-- `POST shipments/<shipment_id>/cancel/`
-- `POST shipments/<shipment_id>/confirm-delivery/`
-
-Reputation `/api/reputation/`
-- `POST reviews/`
-- `GET users/<user_id>/reviews/`
-- `GET users/<user_id>/summary/`
-- `GET leaderboard/`
-
-Audit `/api/audit/`
-- `GET events/`
-- `GET actions/`
-- `POST actions/<action_id>/manage/`
-
-Dashboard `/api/dashboard/`
-- `GET stats/`
-
-**Auditability Model**
-Two layers are implemented:
-- Entity mutation audit (`audit_events`): immutable create/update/delete/custom events with before/after snapshots and hash chain.
-- Request action audit (`audit_request_actions`): request metadata + status for critical domains.
-
-**Planned Additions (Per App)**
-- `users`: MFA, passwordless auth, profile avatars
-- `verification`: document storage, automatic OCR checks
-- `listings`: product media galleries, inventory synchronization
-- `discovery`: personalized ranking and saved searches
-- `orders`: returns workflow, partial fulfillment tracking
-- `payments`: external provider integrations, reconciliation tooling
-- `logistics`: GPS tracking, route optimization
-- `reputation`: badges, dispute resolution hooks
-- `audit`: export pipelines and alerting
-- `dashboard`: admin analytics and marketplace KPIs
