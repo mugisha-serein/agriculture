@@ -89,6 +89,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    'django_q',
     'users.apps.UsersConfig',
     'verification.apps.VerificationConfig',
     'listings.apps.ListingsConfig',
@@ -192,6 +193,25 @@ SIMPLE_JWT = {
     'ALGORITHM': 'HS256',
     'SIGNING_KEY': SECRET_KEY,
     'AUTH_HEADER_TYPES': ('Bearer',),
+}
+
+HIBP_ENABLED = _env_bool('HIBP_ENABLED', False)
+HIBP_API_URL = os.environ.get('HIBP_API_URL', 'https://api.pwnedpasswords.com/range/')
+HIBP_USER_AGENT = os.environ.get('HIBP_USER_AGENT', 'AgricultureBackend/1.0')
+HIBP_TIMEOUT_SECONDS = _env_int('HIBP_TIMEOUT_SECONDS', 4)
+HIBP_MIN_BREACH_COUNT = _env_int('HIBP_MIN_BREACH_COUNT', 1)
+HIBP_FAIL_CLOSED = _env_bool('HIBP_FAIL_CLOSED', True)
+
+Q_CLUSTER = {
+    'name': os.environ.get('Q_CLUSTER_NAME', 'agri-backend'),
+    'workers': _env_int('Q_CLUSTER_WORKERS', 4),
+    'recycle': _env_int('Q_CLUSTER_RECYCLE', 500),
+    'timeout': _env_int('Q_CLUSTER_TIMEOUT', 300),
+    'retry': _env_int('Q_CLUSTER_RETRY', 300),
+    'queue_limit': _env_int('Q_CLUSTER_QUEUE_LIMIT', 50),
+    'bulk': _env_int('Q_CLUSTER_BULK', 10),
+    'orm': 'default',
+    'sync': _env_bool('Q_CLUSTER_SYNC', False),
 }
 
 CORS_ALLOWED_ORIGINS = [

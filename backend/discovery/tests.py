@@ -9,7 +9,7 @@ from rest_framework.test import APITestCase
 
 from discovery.models import SearchQueryLog
 from listings.domain.statuses import ListingStatus
-from listings.models import Crop, Product
+from listings.models import Crop, Product, ProductInventory, ProductPricing
 from users.models import User
 
 
@@ -40,8 +40,6 @@ class DiscoveryApiTests(APITestCase):
             title='Fresh Maize Grade A',
             description='New harvest maize',
             unit='kg',
-            price_per_unit='12.00',
-            quantity_available='500.000',
             minimum_order_quantity='10.000',
             location_name='Johannesburg',
             latitude='-26.204100',
@@ -49,20 +47,42 @@ class DiscoveryApiTests(APITestCase):
             expires_at=timezone.now() + timedelta(days=10),
             status=ListingStatus.ACTIVE,
         )
+        ProductInventory.objects.create(
+            product=self.maize_product,
+            available_quantity='500.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=self.maize_product,
+            currency='USD',
+            price='12.00',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
+        )
         self.beans_product = Product.objects.create(
             seller=self.seller,
             crop=self.beans,
             title='Red Beans',
             description='Premium dry beans',
             unit='kg',
-            price_per_unit='18.00',
-            quantity_available='120.000',
             minimum_order_quantity='5.000',
             location_name='Pretoria',
             latitude='-25.747900',
             longitude='28.229300',
             expires_at=timezone.now() + timedelta(days=8),
             status=ListingStatus.ACTIVE,
+        )
+        ProductInventory.objects.create(
+            product=self.beans_product,
+            available_quantity='120.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=self.beans_product,
+            currency='USD',
+            price='18.00',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
 
     def test_public_search_returns_results_and_logs_query(self):
@@ -104,20 +124,30 @@ class DiscoveryApiTests(APITestCase):
 
     def test_radius_filter_and_distance_sort(self):
         """Geo radius and distance sort should prioritize nearby listings."""
-        Product.objects.create(
+        far_product = Product.objects.create(
             seller=self.seller,
             crop=self.maize,
             title='Cape Maize',
             description='Far listing',
             unit='kg',
-            price_per_unit='11.50',
-            quantity_available='100.000',
             minimum_order_quantity='4.000',
             location_name='Cape Town',
             latitude='-33.924900',
             longitude='18.424100',
             expires_at=timezone.now() + timedelta(days=7),
             status=ListingStatus.ACTIVE,
+        )
+        ProductInventory.objects.create(
+            product=far_product,
+            available_quantity='100.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=far_product,
+            currency='USD',
+            price='11.50',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
 
         response = self.client.get(
@@ -143,12 +173,22 @@ class DiscoveryApiTests(APITestCase):
             title='Inactive Maize',
             description='Hidden listing',
             unit='kg',
-            price_per_unit='9.50',
-            quantity_available='90.000',
             minimum_order_quantity='5.000',
             location_name='Polokwane',
             expires_at=timezone.now() + timedelta(days=6),
             status=ListingStatus.INACTIVE,
+        )
+        ProductInventory.objects.create(
+            product=inactive,
+            available_quantity='90.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=inactive,
+            currency='USD',
+            price='9.50',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
         expired = Product.objects.create(
             seller=self.seller,
@@ -156,12 +196,22 @@ class DiscoveryApiTests(APITestCase):
             title='Expired Maize',
             description='Expired listing',
             unit='kg',
-            price_per_unit='8.50',
-            quantity_available='70.000',
             minimum_order_quantity='5.000',
             location_name='Mbombela',
             expires_at=timezone.now() + timedelta(days=1),
             status=ListingStatus.ACTIVE,
+        )
+        ProductInventory.objects.create(
+            product=expired,
+            available_quantity='70.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=expired,
+            currency='USD',
+            price='8.50',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
         deleted = Product.objects.create(
             seller=self.seller,
@@ -169,14 +219,24 @@ class DiscoveryApiTests(APITestCase):
             title='Deleted Maize',
             description='Deleted listing',
             unit='kg',
-            price_per_unit='7.50',
-            quantity_available='70.000',
             minimum_order_quantity='5.000',
             location_name='Kimberley',
             expires_at=timezone.now() + timedelta(days=6),
             status=ListingStatus.ACTIVE,
             is_deleted=True,
             deleted_at=timezone.now(),
+        )
+        ProductInventory.objects.create(
+            product=deleted,
+            available_quantity='70.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=deleted,
+            currency='USD',
+            price='7.50',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
         Product.objects.filter(id=expired.id).update(expires_at=timezone.now() - timedelta(minutes=1))
 

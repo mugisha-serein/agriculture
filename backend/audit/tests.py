@@ -10,8 +10,7 @@ from rest_framework.test import APITestCase
 
 from audit.models import AuditEvent
 from audit.models import AuditRequestAction
-from listings.models import Crop
-from listings.models import Product
+from listings.models import Crop, Product, ProductInventory, ProductPricing
 from users.models import User
 
 
@@ -48,12 +47,22 @@ class AuditabilityTests(APITestCase):
             crop=self.crop,
             title='Red Tomato',
             unit='kg',
-            price_per_unit='6.00',
-            quantity_available='100.000',
             minimum_order_quantity='2.000',
             location_name='Johannesburg',
             expires_at=timezone.now() + timedelta(days=10),
             status='active',
+        )
+        ProductInventory.objects.create(
+            product=self.product,
+            available_quantity='100.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=self.product,
+            currency='USD',
+            price='6.00',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
 
     def test_request_actor_and_changes_are_audited(self):
@@ -64,7 +73,7 @@ class AuditabilityTests(APITestCase):
         self.client.force_authenticate(user=self.seller)
         response = self.client.patch(
             reverse('marketplace:product-detail', kwargs={'product_id': self.product.id}),
-            data={'quantity_available': '90.000'},
+            data={'available_quantity': '90.000'},
             format='json',
             HTTP_X_REQUEST_ID=request_id,
         )
@@ -72,11 +81,12 @@ class AuditabilityTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.headers.get('X-Request-ID'), request_id)
 
+        inventory_id = self.product.inventory.id
         event = (
             AuditEvent.objects.filter(
                 id__gt=baseline_id,
-                model_label='listings.Product',
-                object_pk=str(self.product.id),
+                model_label='listings.ProductInventory',
+                object_pk=str(inventory_id),
                 action='update',
             )
             .order_by('-id')
@@ -87,7 +97,7 @@ class AuditabilityTests(APITestCase):
         self.assertEqual(event.request_id, request_id)
         self.assertEqual(event.request_method, 'PATCH')
         self.assertEqual(event.request_path, f'/api/marketplace/products/{self.product.id}/')
-        self.assertIn('quantity_available', event.change_set)
+        self.assertIn('available_quantity', event.change_set)
 
     def test_delete_operation_is_audited(self):
         """Model delete operations should write immutable delete audit events."""

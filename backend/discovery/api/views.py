@@ -42,8 +42,12 @@ class SearchView(APIView):
                     'seller_id': ranked.product.seller_id,
                     'seller_email': ranked.product.seller.email,
                     'unit': ranked.product.unit,
-                    'price_per_unit': ranked.product.price_per_unit,
-                    'quantity_available': ranked.product.quantity_available,
+                    'price_per_unit': ranked.unit_price,
+                    'quantity_available': (
+                        ranked.product.inventory.available_quantity
+                        if ranked.product.inventory
+                        else 0
+                    ),
                     'minimum_order_quantity': ranked.product.minimum_order_quantity,
                     'location_name': ranked.product.location_name,
                     'latitude': ranked.product.latitude,
@@ -76,10 +80,10 @@ class HomeView(APIView):
         now = timezone.now()
         today = timezone.localdate()
 
-        available_products = Product.objects.select_related('crop', 'seller').filter(
+        available_products = Product.objects.select_related('crop', 'seller', 'inventory').filter(
             is_deleted=False,
             status=ListingStatus.ACTIVE,
-            quantity_available__gt=0,
+            inventory__available_quantity__gt=0,
             available_from__lte=today,
             expires_at__gt=now,
             seller__is_verified=True,

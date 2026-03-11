@@ -7,12 +7,13 @@ from rest_framework.views import APIView
 from users.api.serializers import (
     ActivationSerializer,
     LoginSerializer,
+    LoginVerificationSerializer,
     LogoutSerializer,
     RefreshSerializer,
     RegistrationSerializer,
     TokenVerifySerializer,
 )
-from users.services.identity_service import IdentityService
+from users.services.identity_service import IdentityService, LoginVerificationRequired
 
 
 class RegistrationView(APIView):
@@ -87,7 +88,36 @@ class LoginView(APIView):
             password=serializer.validated_data['password'],
             user_agent=serializer.validated_data.get('user_agent', ''),
             ip_address=self._resolve_ip_address(request),
+            device_id=serializer.validated_data.get('device_id'),
+            device_name=serializer.validated_data.get('device_name', ''),
+            device_type=serializer.validated_data.get('device_type'),
+            device_os=serializer.validated_data.get('device_os', ''),
+            device_browser=serializer.validated_data.get('device_browser', ''),
+            app_version=serializer.validated_data.get('app_version', ''),
         )
+        if isinstance(result, LoginVerificationRequired):
+            return Response(
+                {
+                    'verification_required': True,
+                    'challenge_id': result.challenge_id,
+                    'expires_at': result.expires_at,
+                    'verification_code': result.verification_code,
+                    'detail': 'Additional verification required.',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        device_payload = None
+        if result.device:
+            device_payload = {
+                'id': result.device.id,
+                'device_id': result.device.device_identifier,
+                'name': result.device.name,
+                'type': result.device.device_type,
+                'os': result.device.operating_system,
+                'browser': result.device.browser,
+                'app_version': result.device.app_version,
+                'last_seen_at': result.device.last_seen_at,
+            }
         return Response(
             {
                 'user': {
@@ -99,6 +129,7 @@ class LoginView(APIView):
                     'role': result.user.role,
                     'is_verified': result.user.is_verified,
                 },
+                'device': device_payload,
                 'session_id': result.session.id,
                 'access_token': result.access_token,
                 'refresh_token': result.refresh_token,
@@ -138,6 +169,64 @@ class RefreshView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class LoginVerificationView(APIView):
+    """Validate a login challenge and issue JWT tokens."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        """Handle login verification requests."""
+        serializer = LoginVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        service = IdentityService()
+        result = service.verify_login_challenge(
+            challenge_id=serializer.validated_data['challenge_id'],
+            verification_code=serializer.validated_data['verification_code'],
+            user_agent=serializer.validated_data.get('user_agent', ''),
+            ip_address=self._resolve_ip_address(request),
+        )
+        device_payload = None
+        if result.device:
+            device_payload = {
+                'id': result.device.id,
+                'device_id': result.device.device_identifier,
+                'name': result.device.name,
+                'type': result.device.device_type,
+                'os': result.device.operating_system,
+                'browser': result.device.browser,
+                'app_version': result.device.app_version,
+                'last_seen_at': result.device.last_seen_at,
+            }
+        return Response(
+            {
+                'user': {
+                    'id': result.user.id,
+                    'email': result.user.email,
+                    'first_name': result.user.first_name,
+                    'last_name': result.user.last_name,
+                    'phone': result.user.phone,
+                    'role': result.user.role,
+                    'is_verified': result.user.is_verified,
+                },
+                'device': device_payload,
+                'session_id': result.session.id,
+                'access_token': result.access_token,
+                'refresh_token': result.refresh_token,
+                'access_expires_at': result.access_expires_at,
+                'refresh_expires_at': result.refresh_expires_at,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @staticmethod
+    def _resolve_ip_address(request):
+        """Resolve the client IP address from request metadata."""
+        forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+        if forwarded:
+            return forwarded.split(',')[0].strip()
+        return request.META.get('REMOTE_ADDR')
 
 
 class LogoutView(APIView):
