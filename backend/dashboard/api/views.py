@@ -73,15 +73,25 @@ class DashboardView(APIView):
             })
 
         # Stock Alerts
-        low_stock = Product.objects.filter(seller=user, is_deleted=False, quantity_available__gt=0, quantity_available__lt=10)[:3]
+        low_stock = Product.objects.filter(
+            seller=user,
+            is_deleted=False,
+            inventory__available_quantity__gt=0,
+            inventory__available_quantity__lt=10,
+        ).select_related('inventory')[:3]
         for p in low_stock:
+            available_qty = p.inventory.available_quantity if p.inventory else 0
             activity.append({
                 'type': 'stock_low',
-                'description': f"Low stock: {p.title} ({p.quantity_available} left)",
+                'description': f"Low stock: {p.title} ({available_qty} left)",
                 'timestamp': timezone.now() # Recent alert
             })
             
-        out_of_stock = Product.objects.filter(seller=user, is_deleted=False, quantity_available=0)[:3]
+        out_of_stock = Product.objects.filter(
+            seller=user,
+            is_deleted=False,
+            inventory__available_quantity=0,
+        ).select_related('inventory')[:3]
         for p in out_of_stock:
             activity.append({
                 'type': 'out_of_stock',

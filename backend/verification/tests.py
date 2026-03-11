@@ -2,7 +2,9 @@
 
 import shutil
 import tempfile
+from pathlib import Path
 
+from django.conf import settings
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
@@ -20,7 +22,9 @@ class VerificationApiTests(APITestCase):
     def setUpClass(cls):
         """Create an isolated media directory for upload tests."""
         super().setUpClass()
-        cls._media_root = tempfile.mkdtemp(prefix='verification-tests-')
+        tmp_root = Path(settings.BASE_DIR) / 'tmp'
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        cls._media_root = tempfile.mkdtemp(prefix='verification-tests-', dir=tmp_root)
         cls._override = override_settings(MEDIA_ROOT=cls._media_root)
         cls._override.enable()
 
@@ -35,14 +39,16 @@ class VerificationApiTests(APITestCase):
         """Create user fixtures for verification flow tests."""
         self.user = User.objects.create_user(
             email='buyer@example.com',
-            full_name='Buyer One',
+            first_name='Buyer',
+            last_name='One',
             password='StrongPass123',
             role='buyer',
             is_active=True,
         )
         self.admin_user = User.objects.create_user(
             email='admin@example.com',
-            full_name='Admin One',
+            first_name='Buyer',
+            last_name='One',
             password='StrongPass123',
             role='admin',
             is_active=True,
@@ -81,7 +87,9 @@ class VerificationApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'pending')
-        self.assertTrue(UserVerification.objects.filter(user=self.user, is_current=True).exists())
+        verification = UserVerification.objects.get(user=self.user, is_current=True)
+        self.assertTrue(verification.documents.exists())
+        self.assertEqual(len(response.data['documents']), 1)
 
     def test_resubmission_retires_previous_current_record(self):
         """Submitting again should retire old current verification record."""
@@ -92,6 +100,7 @@ class VerificationApiTests(APITestCase):
                 'document_type': 'passport',
                 'document_number': 'P-11111',
                 'document_front': self._front_file('first'),
+                'expiry_date': '2030-01-01',
             },
             format='multipart',
         )
@@ -101,6 +110,7 @@ class VerificationApiTests(APITestCase):
                 'document_type': 'passport',
                 'document_number': 'P-22222',
                 'document_front': self._front_file('second'),
+                'expiry_date': '2030-02-01',
             },
             format='multipart',
         )
@@ -121,6 +131,8 @@ class VerificationApiTests(APITestCase):
                 'document_type': 'driver_license',
                 'document_number': 'DL-9000',
                 'document_front': self._front_file('review'),
+                'document_back': self._back_file('review'),
+                'expiry_date': '2029-12-31',
             },
             format='multipart',
         )
@@ -134,13 +146,16 @@ class VerificationApiTests(APITestCase):
         review = self.client.post(
             reverse('verification:admin-review', kwargs={'verification_id': verification_id}),
             data={
-                'decision': 'approved',
-                'admin_notes': 'Documents validated',
+                'status': 'approved',
+                'review_notes': 'Documents validated',
             },
             format='json',
         )
-        self.assertEqual(review.status_code, status.HTTP_200_OK)
+
+        self.assertEqual(review.status_code, status.HTTP_200_OK, review.data)
         self.assertEqual(review.data['status'], 'approved')
+        self.assertTrue(review.data['reviews'])
+        self.assertTrue(review.data['status_logs'])
 
     def test_non_admin_cannot_access_admin_endpoints(self):
         """Non-admin users should be blocked from admin verification endpoints."""

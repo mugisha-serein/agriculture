@@ -9,8 +9,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from listings.domain.statuses import ListingStatus
-from listings.models import Crop
-from listings.models import Product
+from listings.models import Crop, Product, ProductInventory, ProductPricing
 from orders.models import Order
 from orders.models import OrderItem
 from payments.domain.statuses import PaymentStatus
@@ -58,12 +57,22 @@ class PaymentsApiTests(APITestCase):
             crop=self.crop,
             title='Fresh Potato',
             unit='kg',
-            price_per_unit='20.00',
-            quantity_available='100.000',
             minimum_order_quantity='2.000',
             location_name='Johannesburg',
             expires_at=timezone.now() + timedelta(days=7),
             status=ListingStatus.ACTIVE,
+        )
+        ProductInventory.objects.create(
+            product=self.product,
+            available_quantity='100.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=self.product,
+            currency='USD',
+            price='20.00',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
         self.order = Order.objects.create(
             order_number='ORD-TEST-0001',

@@ -8,8 +8,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from listings.domain.statuses import ListingStatus
-from listings.models import Crop
-from listings.models import Product
+from listings.models import Crop, Product, ProductInventory, ProductPricing
 from logistics.domain.statuses import ShipmentStatus
 from orders.models import Order
 from orders.models import OrderItem
@@ -63,12 +62,22 @@ class LogisticsApiTests(APITestCase):
             crop=self.crop,
             title='Orange Carrot',
             unit='kg',
-            price_per_unit='8.00',
-            quantity_available='200.000',
             minimum_order_quantity='2.000',
             location_name='Pretoria',
             expires_at=timezone.now() + timedelta(days=7),
             status=ListingStatus.ACTIVE,
+        )
+        ProductInventory.objects.create(
+            product=self.product,
+            available_quantity='200.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=self.product,
+            currency='USD',
+            price='8.00',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
         self.order = Order.objects.create(
             order_number='ORD-LOG-0001',

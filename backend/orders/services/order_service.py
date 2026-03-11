@@ -28,7 +28,8 @@ class OrderService:
         product_ids = [item['product_id'] for item in normalized_items]
         products = (
             Product.objects.select_for_update()
-            .select_related('seller', 'crop')
+            .select_related('seller', 'crop', 'inventory')
+            .prefetch_related('pricing')
             .filter(id__in=product_ids)
         )
         products_by_id = {product.id: product for product in products}
@@ -52,8 +53,24 @@ class OrderService:
         for item in normalized_items:
             product = products_by_id[item['product_id']]
             quantity = item['quantity']
-            self._assert_orderable_product(product=product, now=now, today=today, quantity=quantity)
-            line_total = (quantity * product.price_per_unit).quantize(
+            pricing = product.get_active_pricing(now=now)
+            if pricing is None:
+                raise ValidationError({'items': [f'Product {product.id} has no active pricing.']})
+            unit_price = (pricing.price - pricing.discount).quantize(
+                Decimal('0.01'),
+                rounding=ROUND_HALF_UP,
+            )
+            if unit_price <= 0:
+                raise ValidationError({'items': [f'Product {product.id} has an invalid price.']})
+            inventory = product.inventory
+            self._assert_orderable_product(
+                product=product,
+                inventory=inventory,
+                now=now,
+                today=today,
+                quantity=quantity,
+            )
+            line_total = (quantity * unit_price).quantize(
                 Decimal('0.01'),
                 rounding=ROUND_HALF_UP,
             )
@@ -63,7 +80,7 @@ class OrderService:
                 seller=product.seller,
                 product_title=product.title,
                 unit=product.unit,
-                unit_price=product.price_per_unit,
+                unit_price=unit_price,
                 quantity=quantity,
                 line_total=line_total,
                 status=OrderItemStatus.ALLOCATED,
@@ -73,14 +90,19 @@ class OrderService:
             seller_ids.add(product.seller_id)
             subtotal_amount += line_total
 
-            product.quantity_available = (product.quantity_available - quantity).quantize(
+            inventory.available_quantity = (inventory.available_quantity - quantity).quantize(
                 Decimal('0.001'),
                 rounding=ROUND_HALF_UP,
             )
-            if product.quantity_available <= 0:
-                product.quantity_available = Decimal('0.000')
+            inventory.reserved_quantity = (inventory.reserved_quantity + quantity).quantize(
+                Decimal('0.001'),
+                rounding=ROUND_HALF_UP,
+            )
+            if inventory.available_quantity <= 0:
+                inventory.available_quantity = Decimal('0.000')
                 product.status = ListingStatus.SOLD_OUT
-            product.save(update_fields=['quantity_available', 'status', 'updated_at'])
+            inventory.save(update_fields=['available_quantity', 'reserved_quantity', 'updated_at'])
+            product.save(update_fields=['status', 'updated_at'])
 
         order.subtotal_amount = subtotal_amount
         order.seller_count = len(seller_ids)
@@ -173,7 +195,7 @@ class OrderService:
         try:
             item = (
                 OrderItem.objects.select_for_update()
-                .select_related('seller')
+                .select_related('seller', 'product', 'product__inventory')
                 .get(id=item_id, order=order)
             )
         except OrderItem.DoesNotExist as exc:
@@ -188,6 +210,17 @@ class OrderService:
         item.fulfilled_at = timezone.now()
         item.save(update_fields=['status', 'fulfilled_at', 'updated_at'])
 
+        inventory = item.product.inventory if item.product else None
+        if inventory:
+            inventory.reserved_quantity = max(
+                Decimal('0.000'),
+                (inventory.reserved_quantity - item.quantity).quantize(
+                    Decimal('0.001'),
+                    rounding=ROUND_HALF_UP,
+                ),
+            )
+            inventory.save(update_fields=['reserved_quantity', 'updated_at'])
+
         remaining_allocated = order.items.filter(status=OrderItemStatus.ALLOCATED).exists()
         if not remaining_allocated:
             order.status = OrderStatus.COMPLETED
@@ -195,7 +228,7 @@ class OrderService:
             order.save(update_fields=['status', 'completed_at', 'updated_at'])
         return self.get_order(actor=actor, order_id=order_id)
 
-    def _assert_orderable_product(self, *, product, now, today, quantity):
+    def _assert_orderable_product(self, *, product, inventory, now, today, quantity):
         """Validate listing state before order allocation."""
         if product.is_deleted:
             raise ValidationError({'items': [f'Product {product.id} is not available.']})
@@ -205,11 +238,13 @@ class OrderService:
             raise ValidationError({'items': [f'Product {product.id} is not yet available.']})
         if product.expires_at <= now:
             raise ValidationError({'items': [f'Product {product.id} is expired.']})
+        if inventory is None:
+            raise ValidationError({'items': [f'Product {product.id} has no inventory record.']})
         if quantity < product.minimum_order_quantity:
             raise ValidationError(
                 {'items': [f'Product {product.id} requires minimum quantity {product.minimum_order_quantity}.']}
             )
-        if quantity > product.quantity_available:
+        if quantity > inventory.available_quantity:
             raise ValidationError(
                 {'items': [f'Product {product.id} has insufficient quantity available.']}
             )
@@ -270,7 +305,7 @@ class OrderService:
     def _restock_allocated_items(self, *, items, now):
         """Return allocated quantities back to listing inventory during cancellation."""
         product_ids = [item.product_id for item in items if item.status == OrderItemStatus.ALLOCATED]
-        products = Product.objects.select_for_update().filter(id__in=product_ids)
+        products = Product.objects.select_for_update().select_related('inventory').filter(id__in=product_ids)
         products_by_id = {product.id: product for product in products}
 
         for item in items:
@@ -279,18 +314,29 @@ class OrderService:
             product = products_by_id.get(item.product_id)
             if product is None:
                 continue
-            product.quantity_available = (product.quantity_available + item.quantity).quantize(
+            inventory = product.inventory
+            if inventory is None:
+                continue
+            inventory.available_quantity = (inventory.available_quantity + item.quantity).quantize(
                 Decimal('0.001'),
                 rounding=ROUND_HALF_UP,
+            )
+            inventory.reserved_quantity = max(
+                Decimal('0.000'),
+                (inventory.reserved_quantity - item.quantity).quantize(
+                    Decimal('0.001'),
+                    rounding=ROUND_HALF_UP,
+                ),
             )
             if (
                 not product.is_deleted
                 and product.expires_at > now
-                and product.quantity_available > 0
+                and inventory.available_quantity > 0
                 and product.status in {ListingStatus.SOLD_OUT, ListingStatus.INACTIVE, ListingStatus.EXPIRED}
             ):
                 product.status = ListingStatus.ACTIVE
-            product.save(update_fields=['quantity_available', 'status', 'updated_at'])
+            inventory.save(update_fields=['available_quantity', 'reserved_quantity', 'updated_at'])
+            product.save(update_fields=['status', 'updated_at'])
 
     def _generate_order_number(self):
         """Generate a unique order number identifier."""

@@ -20,6 +20,7 @@ class RankedProduct:
     product: Product
     score: float
     distance_km: float | None
+    unit_price: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,20 +53,18 @@ class DiscoveryService:
         actor=None,
     ):
         """Search available marketplace products and return ranked results."""
-        queryset = Product.objects.select_related('crop', 'seller').filter(
+        queryset = Product.objects.select_related('crop', 'seller', 'inventory').prefetch_related(
+            'pricing'
+        ).filter(
             is_deleted=False,
             status=ListingStatus.ACTIVE,
-            quantity_available__gt=0,
+            inventory__available_quantity__gt=0,
             available_from__lte=timezone.localdate(),
             expires_at__gt=timezone.now(),
         )
 
         if crop_id is not None:
             queryset = queryset.filter(crop_id=crop_id)
-        if min_price is not None:
-            queryset = queryset.filter(price_per_unit__gte=min_price)
-        if max_price is not None:
-            queryset = queryset.filter(price_per_unit__lte=max_price)
         if query:
             queryset = queryset.filter(
                 Q(title__icontains=query)
@@ -95,6 +94,17 @@ class DiscoveryService:
                     if radius_km is not None and distance_km > float(radius_km):
                         continue
 
+            pricing = product.get_active_pricing(now=now)
+            if pricing is None:
+                continue
+            unit_price = pricing.price - pricing.discount
+            if unit_price <= 0:
+                continue
+            if min_price is not None and unit_price < min_price:
+                continue
+            if max_price is not None and unit_price > max_price:
+                continue
+
             score = self._score_product(
                 product=product,
                 tokens=tokens,
@@ -102,7 +112,14 @@ class DiscoveryService:
                 has_location=has_location,
                 distance_km=distance_km,
             )
-            ranked_items.append(RankedProduct(product=product, score=score, distance_km=distance_km))
+            ranked_items.append(
+                RankedProduct(
+                    product=product,
+                    score=score,
+                    distance_km=distance_km,
+                    unit_price=unit_price,
+                )
+            )
 
         ranked_items = self._sort_ranked_items(ranked_items=ranked_items, sort=sort, has_location=has_location)
 
@@ -138,9 +155,9 @@ class DiscoveryService:
     def _sort_ranked_items(self, *, ranked_items, sort, has_location):
         """Sort ranked items according to requested strategy."""
         if sort == DiscoverySort.PRICE_ASC:
-            return sorted(ranked_items, key=lambda item: (item.product.price_per_unit, -item.score))
+            return sorted(ranked_items, key=lambda item: (item.unit_price, -item.score))
         if sort == DiscoverySort.PRICE_DESC:
-            return sorted(ranked_items, key=lambda item: (-item.product.price_per_unit, -item.score))
+            return sorted(ranked_items, key=lambda item: (-item.unit_price, -item.score))
         if sort == DiscoverySort.NEWEST:
             return sorted(ranked_items, key=lambda item: (-item.product.created_at.timestamp(), -item.score))
         if sort == DiscoverySort.DISTANCE and has_location:
@@ -169,7 +186,7 @@ class DiscoveryService:
             min(1.0, (product.expires_at - now).total_seconds() / lifespan_seconds),
         )
 
-        inventory_value = float(product.quantity_available)
+        inventory_value = float(product.inventory.available_quantity) if product.inventory else 0.0
         min_qty_value = max(float(product.minimum_order_quantity), 1.0)
         inventory_score = min(1.0, math.log10(inventory_value + 1) / math.log10(min_qty_value * 25 + 1))
 

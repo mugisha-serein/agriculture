@@ -9,7 +9,7 @@ from rest_framework.test import APITestCase
 
 from listings.domain.statuses import ListingStatus
 from listings.models import Crop
-from listings.models import Product
+from listings.models import Product, ProductInventory, ProductPricing
 from orders.domain.statuses import OrderStatus
 from users.models import User
 
@@ -62,12 +62,22 @@ class OrdersApiTests(APITestCase):
             title='Yellow Onion',
             description='Fresh yellow onions',
             unit='kg',
-            price_per_unit='10.00',
-            quantity_available='200.000',
             minimum_order_quantity='5.000',
             location_name='Johannesburg',
             expires_at=timezone.now() + timedelta(days=10),
             status=ListingStatus.ACTIVE,
+        )
+        ProductInventory.objects.create(
+            product=self.product_one,
+            available_quantity='200.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=self.product_one,
+            currency='USD',
+            price='10.00',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
         self.product_two = Product.objects.create(
             seller=self.seller_two,
@@ -75,12 +85,22 @@ class OrdersApiTests(APITestCase):
             title='Red Onion',
             description='Fresh red onions',
             unit='kg',
-            price_per_unit='12.00',
-            quantity_available='150.000',
             minimum_order_quantity='3.000',
             location_name='Pretoria',
             expires_at=timezone.now() + timedelta(days=10),
             status=ListingStatus.ACTIVE,
+        )
+        ProductInventory.objects.create(
+            product=self.product_two,
+            available_quantity='150.000',
+            reserved_quantity='0.000',
+        )
+        ProductPricing.objects.create(
+            product=self.product_two,
+            currency='USD',
+            price='12.00',
+            discount='0.00',
+            valid_from=timezone.now() - timedelta(days=1),
         )
 
     def _create_order(self):
@@ -111,8 +131,10 @@ class OrdersApiTests(APITestCase):
 
         self.product_one.refresh_from_db()
         self.product_two.refresh_from_db()
-        self.assertEqual(str(self.product_one.quantity_available), '180.000')
-        self.assertEqual(str(self.product_two.quantity_available), '140.000')
+        self.product_one.inventory.refresh_from_db()
+        self.product_two.inventory.refresh_from_db()
+        self.assertEqual(str(self.product_one.inventory.available_quantity), '180.000')
+        self.assertEqual(str(self.product_two.inventory.available_quantity), '140.000')
 
     def test_confirm_and_fulfill_items_completes_order(self):
         """Confirmed order should complete when all allocated items are fulfilled."""
@@ -161,8 +183,10 @@ class OrdersApiTests(APITestCase):
 
         self.product_one.refresh_from_db()
         self.product_two.refresh_from_db()
-        self.assertEqual(str(self.product_one.quantity_available), '200.000')
-        self.assertEqual(str(self.product_two.quantity_available), '150.000')
+        self.product_one.inventory.refresh_from_db()
+        self.product_two.inventory.refresh_from_db()
+        self.assertEqual(str(self.product_one.inventory.available_quantity), '200.000')
+        self.assertEqual(str(self.product_two.inventory.available_quantity), '150.000')
 
         second_order = self._create_order()
         self.client.post(reverse('orders:confirm', kwargs={'order_id': second_order['id']}), format='json')

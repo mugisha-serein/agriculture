@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from verification.api.permissions import IsVerificationAdmin
-from verification.api.serializers import VerificationReviewSerializer
+from verification.api.serializers import VerificationReviewInputSerializer
 from verification.api.serializers import VerificationSubmissionSerializer
 from verification.api.serializers import VerificationSummarySerializer
 from verification.services.verification_service import VerificationService
@@ -76,14 +76,14 @@ class AdminReviewVerificationView(APIView):
 
     def post(self, request, verification_id):
         """Handle verification decision submission."""
-        serializer = VerificationReviewSerializer(data=request.data)
+        serializer = VerificationReviewInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         service = VerificationService()
         verification = service.review_verification(
             reviewer=request.user,
             verification_id=verification_id,
-            decision=serializer.validated_data['decision'],
-            admin_notes=serializer.validated_data.get('admin_notes', ''),
+            decision=serializer.validated_data['status'],
+            review_notes=serializer.validated_data.get('review_notes', ''),
             rejection_reason=serializer.validated_data.get('rejection_reason', ''),
         )
         return Response(VerificationSummarySerializer(verification).data, status=status.HTTP_200_OK)

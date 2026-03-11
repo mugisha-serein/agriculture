@@ -49,3 +49,9 @@ tmp/
 # Django media/static
 backend/media/
 backend/staticfiles/
+
+# documentation
+backend/documentation.md
+
+# accounts
+AgriMarket_Credentials.txt
