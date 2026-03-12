@@ -10,6 +10,8 @@ from rest_framework.test import APITestCase
 from discovery.models import SearchQueryLog
 from listings.domain.statuses import ListingStatus
 from listings.models import Crop, Product, ProductInventory, ProductPricing
+from orders.models import Order
+from reputation.models import Review
 from users.models import User
 
 
@@ -20,14 +22,16 @@ class DiscoveryApiTests(APITestCase):
         """Create fixtures for discovery queries and ranking."""
         self.seller = User.objects.create_user(
             email='seller@example.com',
-            full_name='Seller One',
+            first_name='Seller',
+            last_name='One',
             password='StrongPass123',
             role='seller',
             is_active=True,
         )
         self.buyer = User.objects.create_user(
             email='buyer@example.com',
-            full_name='Buyer One',
+            first_name='Buyer',
+            last_name='One',
             password='StrongPass123',
             role='buyer',
             is_active=True,
@@ -247,3 +251,80 @@ class DiscoveryApiTests(APITestCase):
         self.assertNotIn(inactive.id, returned_ids)
         self.assertNotIn(expired.id, returned_ids)
         self.assertNotIn(deleted.id, returned_ids)
+
+    def test_ranking_algorithm_components(self):
+        """Verify that reputation and price competitiveness influence ranking."""
+        # Create a second seller with high reputation
+        top_seller = User.objects.create_user(
+            email='top_seller@example.com',
+            first_name='Top',
+            last_name='Seller',
+            password='StrongPass123',
+            role='seller',
+            is_active=True,
+        )
+        # Give top_seller high reputation via completed order and review
+        order = Order.objects.create(
+            order_number='ORD-001',
+            buyer=self.buyer,
+            status='COMPLETED',
+        )
+        Review.objects.create(
+            order=order,
+            reviewer=self.buyer,
+            reviewee=top_seller,
+            rating=5,
+        )
+
+        # Create a high-priced product for top seller
+        top_seller_product = Product.objects.create(
+            seller=top_seller,
+            crop=self.maize,
+            title='Premium Maize',
+            description='Highly rated maize',
+            unit='kg',
+            minimum_order_quantity='1.0',
+            location_name='Johannesburg',
+            expires_at=timezone.now() + timedelta(days=10),
+            status=ListingStatus.ACTIVE,
+        )
+        ProductInventory.objects.create(product=top_seller_product, available_quantity=100)
+        ProductPricing.objects.create(product=top_seller_product, price='15.00')
+
+        # Create a budget product for original seller (who has 0 reviews)
+        budget_product = Product.objects.create(
+            seller=self.seller,
+            crop=self.maize,
+            title='Budget Maize',
+            description='Cheaper maize',
+            unit='kg',
+            minimum_order_quantity='1.0',
+            location_name='Johannesburg',
+            expires_at=timezone.now() + timedelta(days=10),
+            status=ListingStatus.ACTIVE,
+        )
+        ProductInventory.objects.create(product=budget_product, available_quantity=100)
+        ProductPricing.objects.create(product=budget_product, price='8.00')
+
+        # Search for maize
+        response = self.client.get(reverse('discovery:search'), data={'query': 'maize'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        results = response.data['results']
+        result_ids = [item['id'] for item in results]
+
+        # Order expected based on formula:
+        # Score = relevance + reputation + freshness + distance + price_comp
+        # Top seller product has high reputation score.
+        # Budget product has high price competitiveness.
+        # Original maize_product (Price 12) is middle ground.
+        
+        # Verify that top_seller_product ranks higher than vanilla maize_product due to reputation
+        # even though it's more expensive (15 vs 12).
+        top_seller_rank = result_ids.index(top_seller_product.id)
+        vanilla_rank = result_ids.index(self.maize_product.id)
+        self.assertLess(top_seller_rank, vanilla_rank, "High reputation seller should rank higher even with higher price")
+
+        # Verify that budget product ranks high due to price competitiveness
+        budget_rank = result_ids.index(budget_product.id)
+        self.assertLess(budget_rank, vanilla_rank, "Cheaper product should rank higher than middle-priced product")
