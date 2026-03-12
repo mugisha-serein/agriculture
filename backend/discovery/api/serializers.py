@@ -54,3 +54,13 @@ class DiscoveryProductSerializer(serializers.Serializer):
     expires_at = serializers.DateTimeField()
     score = serializers.FloatField()
     distance_km = serializers.FloatField(allow_null=True)
+
+class PlatformSystemSerializer(serializers.Serializer):
+    """Output serializer for platform systems."""
+
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    description = serializers.CharField()
+    icon = serializers.CharField()
+    target_url = serializers.CharField()
+    position = serializers.IntegerField()

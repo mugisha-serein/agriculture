@@ -46,6 +46,21 @@ class SearchQueryLog(TimestampedModel):
         db_table = 'search_queries'
         ordering = ['-searched_at']
 
+
+class PlatformSystem(TimestampedModel):
+    """Discovery domain representing integrated platform systems and tools."""
+
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField()
+    icon = models.CharField(max_length=50, help_text="Lucide icon name")
+    target_url = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True)
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = 'platform_systems'
+        ordering = ['position', 'name']
+
     def __str__(self):
-        """Return readable representation for admin and debugging."""
-        return f'{self.query_text}:{self.result_count}:{self.id}'
+        """Return readable representation of a platform system."""
+        return self.name

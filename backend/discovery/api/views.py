@@ -7,9 +7,10 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from discovery.api.serializers import DiscoveryProductSerializer
-from discovery.api.serializers import DiscoverySearchSerializer
+from discovery.api.serializers import DiscoveryProductSerializer, DiscoverySearchSerializer, PlatformSystemSerializer
 from discovery.services.discovery_service import DiscoveryService
+from discovery.services.recommendation_service import RecommendationService
+from discovery.models import PlatformSystem
 from listings.api.serializers import ProductSerializer
 from listings.domain.statuses import ListingStatus
 from listings.models import Crop, Product
@@ -61,6 +62,7 @@ class SearchView(APIView):
             )
         payload = {
             'results': DiscoveryProductSerializer(items, many=True).data,
+            'systems': PlatformSystemSerializer(service.search_systems(query=serializer.validated_data.get('query', '')), many=True).data,
             'pagination': {
                 'total_count': result.total_count,
                 'page': result.page,
@@ -97,6 +99,9 @@ class HomeView(APIView):
         verified_sellers = User.objects.filter(role='seller', is_verified=True, is_active=True).count()
         verified_transporters = User.objects.filter(role='transporter', is_verified=True, is_active=True).count()
 
+        systems = PlatformSystem.objects.filter(is_active=True).order_by('position')
+        system_cards = PlatformSystemSerializer(systems, many=True).data
+
         payload = {
             'hero': {
                 'title': 'Grow Your Future.',
@@ -115,12 +120,7 @@ class HomeView(APIView):
                 'subtitle': (
                     'Discover, list, sell, ship, and get paid with verified participants across the full supply chain.'
                 ),
-                'cards': [
-                    {'icon': 'package', 'label': 'Listings & Inventory'},
-                    {'icon': 'shield', 'label': 'Escrow Protection'},
-                    {'icon': 'truck', 'label': 'Logistics Tracking'},
-                    {'icon': 'star', 'label': 'Reputation Scores'},
-                ],
+                'cards': system_cards,
             },
             'slideshow': {
                 'slides': [
@@ -246,3 +246,66 @@ class HomeView(APIView):
             )
 
         return results
+
+
+class RecommendedProductsView(APIView):
+    """Personalized product recommendations for the authenticated user."""
+
+    permission_classes = [permissions.AllowAny] # Service handles guest fallback
+
+    def get(self, request):
+        """Handle recommendation requests with optional coordinates."""
+        service = RecommendationService()
+        latitude = request.query_params.get('latitude')
+        longitude = request.query_params.get('longitude')
+        limit = int(request.query_params.get('limit', 10))
+
+        recommendations = service.get_recommendations(
+            user=request.user,
+            latitude=latitude,
+            longitude=longitude,
+            limit=limit,
+        )
+
+        items = []
+        for rec in recommendations:
+            product = rec['product']
+            now = timezone.now()
+            pricing = product.get_active_pricing(now=now)
+            unit_price = (pricing.price - pricing.discount) if pricing else 0
+
+            items.append(
+                {
+                    'id': product.id,
+                    'title': product.title,
+                    'description': product.description,
+                    'crop_id': product.crop_id,
+                    'crop_name': product.crop.name,
+                    'seller_id': product.seller_id,
+                    'seller_email': product.seller.email,
+                    'unit': product.unit,
+                    'price_per_unit': unit_price,
+                    'quantity_available': (
+                        product.inventory.available_quantity
+                        if product.inventory
+                        else 0
+                    ),
+                    'minimum_order_quantity': product.minimum_order_quantity,
+                    'location_name': product.location_name,
+                    'latitude': product.latitude,
+                    'longitude': product.longitude,
+                    'expires_at': product.expires_at,
+                    'score': round(rec['score'], 6),
+                    'distance_km': None
+                    if rec['distance_km'] is None
+                    else round(rec['distance_km'], 3),
+                }
+            )
+
+        return Response(
+            {
+                'results': DiscoveryProductSerializer(items, many=True).data,
+                'count': len(items),
+            },
+            status=status.HTTP_200_OK,
+        )
