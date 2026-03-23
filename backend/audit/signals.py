@@ -8,6 +8,8 @@ from django.db.models.signals import pre_delete
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 
+from django.conf import settings
+
 from audit.domain.actions import AuditAction
 from audit.services.audit_service import AuditService
 
@@ -15,19 +17,25 @@ from audit.services.audit_service import AuditService
 _before_update_state_var = ContextVar('audit_before_update_state', default={})
 _before_delete_state_var = ContextVar('audit_before_delete_state', default={})
 
-_AUDITED_APP_LABELS = {
+DEFAULT_AUDITED_APP_LABELS = {
     'verification',
     'listings',
     'orders',
     'payments',
     'logistics',
+    'discovery',
+    'reputation',
 }
+
+
+def _build_audited_app_labels():
+    return set(getattr(settings, 'AUDIT_ENABLED_APPS', DEFAULT_AUDITED_APP_LABELS))
 
 
 def _should_audit_sender(sender):
     """Return whether sender model should be audited."""
     app_label = sender._meta.app_label
-    if app_label not in _AUDITED_APP_LABELS:
+    if app_label not in _build_audited_app_labels():
         if sender._meta.label != 'users.User':
             return False
     return True
@@ -75,11 +83,14 @@ def audit_post_save(sender, instance, created, raw=False, **kwargs):
         if created:
             return
         change_set = audit_service._build_change_set(before_state=before_state, after_state=after_state)
-        if 'last_login' not in change_set:
+        relevant_fields = {'last_login', 'role', 'is_staff', 'is_active'}
+        changed_fields = set(change_set.keys())
+        if not (changed_fields & relevant_fields):
             return
-        action = AuditAction.CUSTOM
-        source = 'last_login'
-        metadata = {'action_name': 'last_login'}
+        action = AuditAction.UPDATE if not change_set.get('last_login') else AuditAction.CUSTOM
+        if 'last_login' in change_set:
+            source = 'last_login'
+            metadata = {'action_name': 'last_login'}
     audit_service.record_model_event(
         action=action,
         instance=instance,

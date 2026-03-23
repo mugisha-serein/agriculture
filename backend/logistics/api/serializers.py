@@ -3,7 +3,10 @@
 from rest_framework import serializers
 
 from logistics.domain.statuses import ShipmentStatus
+from logistics.models import DeliveryRoute
 from logistics.models import Shipment
+from logistics.models import ShipmentItem
+from logistics.models import ShipmentTrackingEvent
 
 
 class ShipmentCreateSerializer(serializers.Serializer):
@@ -28,6 +31,9 @@ class ShipmentStatusUpdateSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=ShipmentStatus.choices)
     location_note = serializers.CharField(max_length=255, required=False, allow_blank=True)
     delivery_proof = serializers.CharField(required=False, allow_blank=True)
+    lat = serializers.DecimalField(max_digits=9, decimal_places=6, required=False)
+    lng = serializers.DecimalField(max_digits=9, decimal_places=6, required=False)
+    timestamp = serializers.DateTimeField(required=False)
 
 
 class ShipmentCancelSerializer(serializers.Serializer):
@@ -94,6 +100,94 @@ class ShipmentSerializer(serializers.ModelSerializer):
             'delivery_proof',
             'delivery_confirmation_note',
             'cancellation_reason',
+            'created_at',
+            'updated_at',
+        )
+
+
+class ShipmentTrackingEventCreateSerializer(serializers.Serializer):
+    """Input serializer for tracking telemetry events."""
+
+    lat = serializers.DecimalField(max_digits=9, decimal_places=6)
+    lng = serializers.DecimalField(max_digits=9, decimal_places=6)
+    status = serializers.ChoiceField(choices=ShipmentStatus.choices)
+    timestamp = serializers.DateTimeField(required=False)
+
+
+class ShipmentTrackingEventSerializer(serializers.ModelSerializer):
+    """Output serializer for tracking telemetry events."""
+
+    class Meta:
+        model = ShipmentTrackingEvent
+        fields = (
+            'id',
+            'status',
+            'lat',
+            'lng',
+            'timestamp',
+            'created_at',
+        )
+
+
+class ShipmentItemSerializer(serializers.ModelSerializer):
+    """Serializer for shipments assigned to a route."""
+
+    shipment_reference = serializers.CharField(source='shipment.shipment_reference', read_only=True)
+
+    class Meta:
+        model = ShipmentItem
+        fields = (
+            'id',
+            'shipment',
+            'shipment_reference',
+            'sequence',
+            'status',
+            'planned_arrival',
+        )
+
+
+class DeliveryRouteCreateSerializer(serializers.Serializer):
+    """Input serializer for planning delivery routes."""
+
+    shipment_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False,
+    )
+    vehicle_identifier = serializers.CharField(max_length=64)
+    driver_name = serializers.CharField(max_length=128)
+    capacity = serializers.IntegerField(min_value=1, default=4)
+    delivery_partner_id = serializers.IntegerField(required=False, allow_null=True)
+
+
+class DeliveryRouteSerializer(serializers.ModelSerializer):
+    """Serializer for planned delivery routes."""
+
+    delivery_partner_id = serializers.IntegerField(
+        source='delivery_partner.id',
+        read_only=True,
+        allow_null=True,
+    )
+    delivery_partner_name = serializers.CharField(
+        source='delivery_partner.name',
+        read_only=True,
+        allow_null=True,
+    )
+    shipment_items = ShipmentItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = DeliveryRoute
+        fields = (
+            'id',
+            'route_code',
+            'delivery_partner_id',
+            'delivery_partner_name',
+            'vehicle_identifier',
+            'driver_name',
+            'capacity',
+            'status',
+            'estimated_start',
+            'estimated_end',
+            'shipment_items',
             'created_at',
             'updated_at',
         )

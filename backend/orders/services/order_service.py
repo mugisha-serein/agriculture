@@ -11,6 +11,7 @@ from rest_framework.exceptions import ValidationError
 
 from listings.domain.statuses import ListingStatus
 from listings.models import Product
+from listings.models import ProductInventory
 from orders.domain.statuses import OrderItemStatus
 from orders.domain.statuses import OrderStatus
 from orders.models import Order
@@ -27,8 +28,8 @@ class OrderService:
         normalized_items = self._normalize_items(items)
         product_ids = [item['product_id'] for item in normalized_items]
         products = (
-            Product.objects.select_for_update()
-            .select_related('seller', 'crop', 'inventory')
+            Product.objects.select_for_update(of=('self',))
+            .select_related('seller', 'crop')
             .prefetch_related('pricing')
             .filter(id__in=product_ids)
         )
@@ -36,6 +37,7 @@ class OrderService:
         if len(products_by_id) != len(product_ids):
             missing = sorted(set(product_ids) - set(products_by_id.keys()))
             raise ValidationError({'items': [f'Unknown product ids: {missing}']})
+        inventory_map = self._lock_inventories(product_ids=product_ids)
 
         now = timezone.now()
         today = timezone.localdate()
@@ -62,7 +64,7 @@ class OrderService:
             )
             if unit_price <= 0:
                 raise ValidationError({'items': [f'Product {product.id} has an invalid price.']})
-            inventory = product.inventory
+            inventory = inventory_map.get(product.id)
             self._assert_orderable_product(
                 product=product,
                 inventory=inventory,
@@ -90,6 +92,8 @@ class OrderService:
             seller_ids.add(product.seller_id)
             subtotal_amount += line_total
 
+            if inventory is None:
+                raise ValidationError({'items': [f'Product {product.id} has no inventory record.']})
             inventory.available_quantity = (inventory.available_quantity - quantity).quantize(
                 Decimal('0.001'),
                 rounding=ROUND_HALF_UP,
@@ -167,7 +171,7 @@ class OrderService:
             raise ValidationError({'status': ['Only pending or confirmed orders can be cancelled.']})
 
         items = list(
-            OrderItem.objects.select_for_update()
+            OrderItem.objects.select_for_update(of=('self',))
             .select_related('product')
             .filter(order=order)
         )
@@ -194,7 +198,7 @@ class OrderService:
 
         try:
             item = (
-                OrderItem.objects.select_for_update()
+                OrderItem.objects.select_for_update(of=('self',))
                 .select_related('seller', 'product', 'product__inventory')
                 .get(id=item_id, order=order)
             )
@@ -305,8 +309,9 @@ class OrderService:
     def _restock_allocated_items(self, *, items, now):
         """Return allocated quantities back to listing inventory during cancellation."""
         product_ids = [item.product_id for item in items if item.status == OrderItemStatus.ALLOCATED]
-        products = Product.objects.select_for_update().select_related('inventory').filter(id__in=product_ids)
+        products = Product.objects.select_for_update(of=('self',)).filter(id__in=product_ids)
         products_by_id = {product.id: product for product in products}
+        inventory_map = self._lock_inventories(product_ids=product_ids)
 
         for item in items:
             if item.status != OrderItemStatus.ALLOCATED:
@@ -314,7 +319,7 @@ class OrderService:
             product = products_by_id.get(item.product_id)
             if product is None:
                 continue
-            inventory = product.inventory
+            inventory = inventory_map.get(item.product_id)
             if inventory is None:
                 continue
             inventory.available_quantity = (inventory.available_quantity + item.quantity).quantize(
@@ -337,6 +342,13 @@ class OrderService:
                 product.status = ListingStatus.ACTIVE
             inventory.save(update_fields=['available_quantity', 'reserved_quantity', 'updated_at'])
             product.save(update_fields=['status', 'updated_at'])
+
+    def _lock_inventories(self, *, product_ids):
+        """Lock inventory records for the provided product identifiers."""
+        if not product_ids:
+            return {}
+        inventories = ProductInventory.objects.select_for_update().filter(product_id__in=product_ids)
+        return {inventory.product_id: inventory for inventory in inventories}
 
     def _generate_order_number(self):
         """Generate a unique order number identifier."""

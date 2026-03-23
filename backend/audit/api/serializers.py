@@ -3,6 +3,7 @@
 from rest_framework import serializers
 
 from audit.domain.actions import AuditAction
+from audit.domain.audiences import AuditAudience
 from audit.domain.management import AuditManagementStatus
 from audit.models import AuditEvent
 from audit.models import AuditRequestAction
@@ -70,6 +71,17 @@ class AuditRequestActionQuerySerializer(serializers.Serializer):
     )
     page = serializers.IntegerField(min_value=1, default=1)
     page_size = serializers.IntegerField(min_value=1, max_value=200, default=50)
+
+
+MAX_EXPORT_LIMIT = 5000
+
+
+class AuditExportQuerySerializer(serializers.Serializer):
+    """Input serializer for audit export requests."""
+
+    audience = serializers.ChoiceField(choices=AuditAudience.choices)
+    since = serializers.DateTimeField(required=False)
+    limit = serializers.IntegerField(min_value=1, max_value=MAX_EXPORT_LIMIT, required=False)
 
 
 class AuditRequestActionManageSerializer(serializers.Serializer):

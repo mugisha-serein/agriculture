@@ -22,40 +22,51 @@ class LogisticsApiTests(APITestCase):
         """Create fixtures for logistics flow tests."""
         self.buyer = User.objects.create_user(
             email='buyer@example.com',
-            full_name='Buyer One',
+            first_name='Buyer',
+            last_name='One',
             password='StrongPass123',
             role='buyer',
             is_active=True,
         )
         self.seller = User.objects.create_user(
             email='seller@example.com',
-            full_name='Seller One',
+            first_name='Seller',
+            last_name='One',
             password='StrongPass123',
             role='seller',
             is_active=True,
         )
+        self.seller.is_verified = True
+        self.seller.save()
         self.transporter = User.objects.create_user(
             email='transporter@example.com',
-            full_name='Transporter One',
+            first_name='Transporter',
+            last_name='One',
             password='StrongPass123',
             role='transporter',
             is_active=True,
         )
+        self.transporter.is_verified = True
+        self.transporter.save()
         self.other_user = User.objects.create_user(
             email='other@example.com',
-            full_name='Other User',
+            first_name='Other',
+            last_name='User',
             password='StrongPass123',
             role='buyer',
             is_active=True,
         )
         self.admin_user = User.objects.create_user(
             email='admin@example.com',
-            full_name='Admin One',
+            first_name='Admin',
+            last_name='One',
             password='StrongPass123',
             role='admin',
             is_active=True,
             is_staff=True,
         )
+        self.admin_user.is_verified = True
+        self.admin_user.save()
         self.crop = Crop.objects.create(name='Carrot', slug='carrot')
         self.product = Product.objects.create(
             seller=self.seller,
@@ -102,14 +113,37 @@ class LogisticsApiTests(APITestCase):
             status='allocated',
             allocated_at=timezone.now(),
         )
+        self.order_two = Order.objects.create(
+            order_number='ORD-LOG-0002',
+            buyer=self.buyer,
+            status='confirmed',
+            currency='ZAR',
+            subtotal_amount='50.00',
+            seller_count=1,
+            item_count=1,
+            placed_at=timezone.now(),
+            confirmed_at=timezone.now(),
+        )
+        OrderItem.objects.create(
+            order=self.order_two,
+            product=self.product,
+            seller=self.seller,
+            product_title=self.product.title,
+            unit=self.product.unit,
+            unit_price='10.00',
+            quantity='5.000',
+            line_total='50.00',
+            status='allocated',
+            allocated_at=timezone.now(),
+        )
 
-    def _create_shipment(self):
+    def _create_shipment(self, *, order_id=None):
         """Create shipment as seller and return payload."""
         self.client.force_authenticate(user=self.seller)
         response = self.client.post(
             reverse('logistics:shipments'),
             data={
-                'order_id': self.order.id,
+                'order_id': order_id or self.order.id,
                 'seller_id': self.seller.id,
                 'pickup_address': 'Farm 12, Pretoria',
                 'delivery_address': 'Market 4, Johannesburg',
@@ -160,6 +194,14 @@ class LogisticsApiTests(APITestCase):
         )
         self.assertEqual(in_transit.status_code, status.HTTP_200_OK)
         self.assertEqual(in_transit.data['status'], ShipmentStatus.IN_TRANSIT)
+
+        out_for_delivery = self.client.post(
+            reverse('logistics:status', kwargs={'shipment_id': shipment_id}),
+            data={'status': ShipmentStatus.OUT_FOR_DELIVERY, 'location_note': 'Entering city'},
+            format='json',
+        )
+        self.assertEqual(out_for_delivery.status_code, status.HTTP_200_OK)
+        self.assertEqual(out_for_delivery.data['status'], ShipmentStatus.OUT_FOR_DELIVERY)
 
         delivered = self.client.post(
             reverse('logistics:status', kwargs={'shipment_id': shipment_id}),
@@ -224,3 +266,40 @@ class LogisticsApiTests(APITestCase):
             format='json',
         )
         self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_tracking_event_endpoint_records_event(self):
+        """Transporter can send GPS telemetry for a shipment."""
+        shipment = self._create_shipment()
+        assigned = self._assign_shipment(shipment_id=shipment['id'])
+        shipment_id = assigned['id']
+        self.client.force_authenticate(user=self.transporter)
+        response = self.client.post(
+            reverse('logistics:tracking', kwargs={'shipment_id': shipment_id}),
+            data={
+                'lat': '-26.204100',
+                'lng': '28.047300',
+                'status': ShipmentStatus.PICKED_UP,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['status'], ShipmentStatus.PICKED_UP)
+
+    def test_route_planning_creates_capacity_bound_routes(self):
+        """Admin can plan delivery routes that chunk shipments."""
+        first_shipment = self._create_shipment(order_id=self.order.id)
+        second_shipment = self._create_shipment(order_id=self.order_two.id)
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(
+            reverse('logistics:route-plan'),
+            data={
+                'shipment_ids': [first_shipment['id'], second_shipment['id']],
+                'vehicle_identifier': 'Truck 27',
+                'driver_name': 'Route Driver',
+                'capacity': 1,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(response.data), 2)
+        self.assertEqual(response.data[0]['shipment_items'][0]['shipment_reference'], first_shipment['shipment_reference'])

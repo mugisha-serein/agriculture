@@ -6,6 +6,8 @@ from django.db import models
 from django.utils import timezone
 
 from audit.domain.actions import AuditAction
+from audit.domain.alerts import AlertSeverity
+from audit.domain.alerts import AlertType
 from audit.domain.management import AuditManagementStatus
 
 
@@ -108,3 +110,33 @@ class AuditRequestAction(models.Model):
     def __str__(self):
         """Return readable request action identifier."""
         return f'{self.app_scope}:{self.action_name}:{self.id}'
+
+
+class AuditAlert(models.Model):
+    """Real-time alert record derived from suspicious audit events."""
+
+    event = models.ForeignKey(
+        AuditEvent,
+        on_delete=models.CASCADE,
+        related_name='alerts',
+    )
+    alert_type = models.CharField(max_length=32, choices=AlertType.choices)
+    severity = models.CharField(max_length=16, choices=AlertSeverity.choices, default=AlertSeverity.WARNING)
+    description = models.CharField(max_length=255)
+    context = models.JSONField(default=dict)
+    triggered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='audit_alerts',
+        null=True,
+        blank=True,
+    )
+    triggered_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'audit_alerts'
+        ordering = ['-triggered_at']
+
+    def __str__(self):
+        """Return readable alert summary."""
+        return f'{self.get_alert_type_display()} -> {self.event}'

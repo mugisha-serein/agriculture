@@ -50,3 +50,25 @@ class ReviewSerializer(serializers.ModelSerializer):
             'comment',
             'created_at',
         )
+
+
+class ReviewVoteSerializer(serializers.Serializer):
+    """Input serializer for review helpfulness votes."""
+
+    review_id = serializers.IntegerField()
+    is_helpful = serializers.BooleanField()
+
+
+class ReviewFlagSerializer(serializers.Serializer):
+    """Input serializer for review flags."""
+
+    review_id = serializers.IntegerField()
+    reason = serializers.CharField()
+
+
+class SellerBadgeSerializer(serializers.Serializer):
+    """Output serializer for seller badges."""
+
+    name = serializers.CharField()
+    description = serializers.CharField()
+    awarded_at = serializers.DateTimeField(allow_null=True)

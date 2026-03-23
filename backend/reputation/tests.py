@@ -23,35 +23,40 @@ class ReputationApiTests(APITestCase):
         """Create completed order participant fixtures for review tests."""
         self.buyer = User.objects.create_user(
             email='buyer@example.com',
-            full_name='Buyer One',
+            first_name='Buyer',
+            last_name='One',
             password='StrongPass123',
             role='buyer',
             is_active=True,
         )
         self.seller = User.objects.create_user(
             email='seller@example.com',
-            full_name='Seller One',
+            first_name='Seller',
+            last_name='One',
             password='StrongPass123',
             role='seller',
             is_active=True,
         )
         self.seller_two = User.objects.create_user(
             email='seller2@example.com',
-            full_name='Seller Two',
+            first_name='Seller',
+            last_name='Two',
             password='StrongPass123',
             role='seller',
             is_active=True,
         )
         self.transporter = User.objects.create_user(
             email='transporter@example.com',
-            full_name='Transporter One',
+            first_name='Transporter',
+            last_name='One',
             password='StrongPass123',
             role='transporter',
             is_active=True,
         )
         self.other_user = User.objects.create_user(
             email='other@example.com',
-            full_name='Other User',
+            first_name='Other',
+            last_name='User',
             password='StrongPass123',
             role='buyer',
             is_active=True,
@@ -190,7 +195,12 @@ class ReputationApiTests(APITestCase):
 
     def test_summary_and_leaderboard_bayesian_scoring(self):
         """Summary and leaderboard should expose Bayesian-adjusted scores."""
-        Review.objects.create(order=self.order, reviewer=self.buyer, reviewee=self.seller, rating=5)
+        self.client.force_authenticate(user=self.buyer)
+        self.client.post(
+            reverse('reputation:create-review'),
+            data={'order_id': self.order.id, 'reviewee_id': self.seller.id, 'rating': 5},
+            format='json',
+        )
 
         second_order = Order.objects.create(
             order_number='ORD-REP-0003',
@@ -217,7 +227,12 @@ class ReputationApiTests(APITestCase):
             allocated_at=timezone.now(),
             fulfilled_at=timezone.now(),
         )
-        Review.objects.create(order=second_order, reviewer=self.other_user, reviewee=self.seller_two, rating=3)
+        self.client.force_authenticate(user=self.other_user)
+        self.client.post(
+            reverse('reputation:create-review'),
+            data={'order_id': second_order.id, 'reviewee_id': self.seller_two.id, 'rating': 3},
+            format='json',
+        )
 
         summary = self.client.get(reverse('reputation:user-summary', kwargs={'user_id': self.seller.id}))
         self.assertEqual(summary.status_code, status.HTTP_200_OK)
@@ -247,3 +262,74 @@ class ReputationApiTests(APITestCase):
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_review_helpfulness_votes_influence_summary(self):
+        """Helpfulness votes should show up in the summary trust signals."""
+        self.client.force_authenticate(user=self.buyer)
+        self.client.post(
+            reverse('reputation:create-review'),
+            data={
+                'order_id': self.order.id,
+                'reviewee_id': self.seller.id,
+                'rating': 5,
+            },
+            format='json',
+        )
+        review = Review.objects.get(order=self.order, reviewer=self.buyer)
+        self.client.force_authenticate(user=self.other_user)
+        vote = self.client.post(
+            reverse('reputation:review-vote'),
+            data={'review_id': review.id, 'is_helpful': True},
+            format='json',
+        )
+        self.assertEqual(vote.status_code, status.HTTP_200_OK)
+        summary = self.client.get(reverse('reputation:user-summary', kwargs={'user_id': self.seller.id}))
+        self.assertGreater(summary.data['review_helpfulness'], 0)
+        self.assertIn('Helpful Reviews', [badge['name'] for badge in summary.data['badges']])
+
+    def test_flagging_review_hides_manipulated_reviews(self):
+        """Multiple flags should hide a review and adjust summary."""
+        self.client.force_authenticate(user=self.buyer)
+        self.client.post(
+            reverse('reputation:create-review'),
+            data={
+                'order_id': self.order.id,
+                'reviewee_id': self.seller.id,
+                'rating': 5,
+            },
+            format='json',
+        )
+        review = Review.objects.get(order=self.order, reviewer=self.buyer)
+        flaggers = [self.seller, self.other_user, self.transporter]
+        for flagger in flaggers:
+            self.client.force_authenticate(user=flagger)
+            response = self.client.post(
+                reverse('reputation:review-flag'),
+                data={'review_id': review.id, 'reason': 'Suspicious content'},
+                format='json',
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+        review.refresh_from_db()
+        self.assertFalse(review.is_visible)
+
+    def test_badges_exposed_via_summary(self):
+        """Summary should include badges when trust signals are high."""
+        self.client.force_authenticate(user=self.buyer)
+        self.client.post(
+            reverse('reputation:create-review'),
+            data={
+                'order_id': self.order.id,
+                'reviewee_id': self.seller.id,
+                'rating': 5,
+            },
+            format='json',
+        )
+        review = Review.objects.get(order=self.order, reviewer=self.buyer)
+        self.client.force_authenticate(user=self.other_user)
+        self.client.post(
+            reverse('reputation:review-vote'),
+            data={'review_id': review.id, 'is_helpful': True},
+            format='json',
+        )
+        summary = self.client.get(reverse('reputation:user-summary', kwargs={'user_id': self.seller.id}))
+        self.assertIn('Helpful Reviews', [badge['name'] for badge in summary.data['badges']])

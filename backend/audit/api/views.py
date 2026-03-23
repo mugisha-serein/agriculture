@@ -9,11 +9,13 @@ from django.utils import timezone
 from audit.api.permissions import IsAuditAdmin
 from audit.api.serializers import AuditEventQuerySerializer
 from audit.api.serializers import AuditEventSerializer
+from audit.api.serializers import AuditExportQuerySerializer
 from audit.api.serializers import AuditRequestActionManageSerializer
 from audit.api.serializers import AuditRequestActionQuerySerializer
 from audit.api.serializers import AuditRequestActionSerializer
 from audit.models import AuditEvent
 from audit.models import AuditRequestAction
+from audit.services.export_service import AuditExportService
 
 
 class AuditEventListView(APIView):
@@ -128,3 +130,20 @@ class AuditRequestActionManageView(APIView):
             update_fields=['management_status', 'management_note', 'managed_by', 'managed_at']
         )
         return Response(AuditRequestActionSerializer(action_row).data, status=status.HTTP_200_OK)
+
+
+class AuditExportView(APIView):
+    """Provide export-ready audit payloads for regulated audiences."""
+
+    permission_classes = [permissions.IsAuthenticated, IsAuditAdmin]
+
+    def get(self, request):
+        """Return serialized audit payloads scoped for the requested audience."""
+        serializer = AuditExportQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        export_payload = AuditExportService().export(
+            audience=serializer.validated_data['audience'],
+            since=serializer.validated_data.get('since'),
+            limit=serializer.validated_data.get('limit'),
+        )
+        return Response(export_payload, status=status.HTTP_200_OK)
