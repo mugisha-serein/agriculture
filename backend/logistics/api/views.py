@@ -5,6 +5,8 @@ from core.permissions import IsVerifiedRole
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from logistics.api.serializers import DeliveryRouteCreateSerializer
+from logistics.api.serializers import DeliveryRouteSerializer
 from logistics.api.serializers import ShipmentAssignSerializer
 from logistics.api.serializers import ShipmentCancelSerializer
 from logistics.api.serializers import ShipmentConfirmDeliverySerializer
@@ -12,6 +14,8 @@ from logistics.api.serializers import ShipmentCreateSerializer
 from logistics.api.serializers import ShipmentListQuerySerializer
 from logistics.api.serializers import ShipmentSerializer
 from logistics.api.serializers import ShipmentStatusUpdateSerializer
+from logistics.api.serializers import ShipmentTrackingEventCreateSerializer
+from logistics.api.serializers import ShipmentTrackingEventSerializer
 from logistics.services.logistics_service import LogisticsService
 
 
@@ -83,6 +87,9 @@ class ShipmentStatusUpdateView(APIView):
             status=serializer.validated_data['status'],
             location_note=serializer.validated_data.get('location_note', ''),
             delivery_proof=serializer.validated_data.get('delivery_proof', ''),
+            lat=serializer.validated_data.get('lat'),
+            lng=serializer.validated_data.get('lng'),
+            timestamp=serializer.validated_data.get('timestamp'),
         )
         return Response(ShipmentSerializer(shipment).data, status=status.HTTP_200_OK)
 
@@ -121,3 +128,40 @@ class ShipmentConfirmDeliveryView(APIView):
             confirmation_note=serializer.validated_data.get('confirmation_note', ''),
         )
         return Response(ShipmentSerializer(shipment).data, status=status.HTTP_200_OK)
+
+
+class ShipmentTrackingEventView(APIView):
+    """Record GPS telemetry for a shipment."""
+
+    permission_classes = [permissions.IsAuthenticated, IsVerifiedRole]
+
+    def post(self, request, shipment_id):
+        serializer = ShipmentTrackingEventCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        service = LogisticsService()
+        event = service.record_tracking_event(
+            actor=request.user,
+            shipment_id=shipment_id,
+            **serializer.validated_data,
+        )
+        return Response(ShipmentTrackingEventSerializer(event).data, status=status.HTTP_201_CREATED)
+
+
+class DeliveryRoutePlanView(APIView):
+    """Plan delivery routes using a simple optimizer."""
+
+    permission_classes = [permissions.IsAuthenticated, IsVerifiedRole]
+
+    def post(self, request):
+        serializer = DeliveryRouteCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        service = LogisticsService()
+        routes = service.plan_delivery_routes(
+            actor=request.user,
+            shipment_ids=serializer.validated_data['shipment_ids'],
+            vehicle_identifier=serializer.validated_data['vehicle_identifier'],
+            driver_name=serializer.validated_data['driver_name'],
+            capacity=serializer.validated_data.get('capacity', 4),
+            delivery_partner_id=serializer.validated_data.get('delivery_partner_id'),
+        )
+        return Response(DeliveryRouteSerializer(routes, many=True).data, status=status.HTTP_201_CREATED)

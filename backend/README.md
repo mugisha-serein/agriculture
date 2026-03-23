@@ -1,102 +1,48 @@
-# Agriculture Backend
+<div align="center">
+  <h1>🌾 Agriculture Platform Backend</h1>
+  <p>Enterprise-grade services orchestrating marketplace, logistics, trust, and compliance workflows.</p>
+</div>
 
-Modular monolith Django backend for the AgriMarket platform.
+<p align="center">
+  <span style="color:#005f73">Modern Django stack · Modular apps · Auditability-first</span>
+</p>
 
-**Stack**
-- Python 3.12+
-- Django 6.0.2
-- Django REST Framework 3.16.1
-- djangorestframework-simplejwt 5.5.1
-- PostgreSQL (required)
-- Django-Q2 (async tasks)
+---
 
-**Architecture**
-Single deployable backend with strict app boundaries and immutable audit capabilities.
+## Core Responsibilities
+| Domain | Responsibility |
+| --- | --- |
+| **Discovery** | Search telemetry, sorting analytics, and platform system registry for discovery experiences. |
+| **Listings** | Marketplace catalog, pricing, inventory, and validation guards that keep offerings consistent. |
+| **Orders** | Order creation, allocation, fulfillment, cancellation, and buyer/seller access controls with transactional safety. |
+| **Payments** | Escrow ledger, refund controls, idempotency, and immutable financial transactions plus reconciliation hooks. |
+| **Logistics** | Shipment lifecycle management, tracking, route planning, delivery telemetry, and transporter coordination. |
+| **Reputation** | Review creation, Bayesian scoring, trust signals, badge awards, and anti-manipulation monitoring. |
+| **Users** | Identity, RBAC, device registration, anomaly detection, and secure authentication policies. |
+| **Verification** | KYC workflow modeling, fraud signals, document/selfie management, and submission queues. |
+| **Audit** | Immutable change events, request hashing, alerts, export pipelines, and project-wide observability. |
+| **Dashboard** | Analytics engine aggregating warehouse metrics, marketplace health, and admin investigation panels. |
 
-| App | Responsibility | Primary Models / Systems |
-|---|---|---|
-| `users` | Identity, RBAC, Security | `User`, `Role`, `UserDevice`, `LoginVerification`, `LoginAttempt`, `IpReputation`, `LoginRateLimit` |
-| `verification` | KYC & Compliance | `UserVerification`, `VerificationDocument`, `VerificationSelfie`, `VerificationReview`, `VerificationStatusLog`, `VerificationFraudCheck` |
-| `listings` | Marketplace Catalog | `Product`, `ProductInventory`, `ProductMedia`, `ProductPricing`, `Crop` |
-| `discovery` | Search & Ranking | Algorithms for relevance and marketplace discovery |
-| `orders` | Order Lifecycle | `Order`, `OrderItem` (line-item allocation) |
-| `payments` | Financial Operations | `Payment` aggregate, `EscrowTransaction` (immutable ledger) |
-| `logistics` | Shipment Tracking | `Shipment` (assignment, tracking, proof of delivery) |
-| `reputation` | Trust & Safety | `Review` (Bayesian reputation aggregation) |
-| `audit` | System Observability | `AuditEvent` (immutable mutations), `AuditRequestAction` (managed actions) |
-| `dashboard` | Analytics | Role-specific derived analytics and marketplace KPIs |
+---
 
-**Security & Data Integrity**
-- **Identity Security**: Brute-force protection, account anomaly detection (device/IP tracking), HIBP password breach checks, and global rate limiting.
-- **RBAC**: Granular role-based access control with dedicated roles for Buyers, Sellers, Transporters, and Admins.
-- **Immutable Audit**: All domain mutations are hashed and chained in an immutable audit log.
-- **Escrow Ledger**: Financial transactions are recorded in an immutable ledger with no deletion/modification allowed.
+## Architectural Highlights
+- **Hash-chained auditing:** Every model mutation and monitored API action includes deterministic SHA256 chaining plus alert/export surfaces for legal/compliance audiences.
+- **Data warehouse tables:** Daily sales, per-product/seller/buyer performance snapshots enforce uniqueness and double as the analytics fuel for dashboards.
+- **Enterprise dashboards:** Admin analytics cover fraud, verification backlogs, payment reconciliation, shipment delays, and seller health with live fallback metrics.
+- **Multi-role coverage:** Sellers, transporters, and administrators receive tailored APIs (dashboards, telemetry, analytics) with role gating and reputation cues.
+- **Normalization:** All apps use database constraints (`unique_together`, idempotent keys) to prevent duplicate artifacts while allowing auditability across domains.
 
-**Background Processing**
-Asynchronous tasks (OCR, Face Matching, Fraud Detection) are handled by **Django-Q2**. Workers process intensive operations without blocking the request-response cycle.
+---
 
-**Hard Requirements**
-- PostgreSQL is mandatory.
-- `POSTGRES_DRIVER` must be `psycopg2`.
-- `psycopg2-binary` must be importable in the Python environment.
-- SQLite is not supported.
+## Quick Links
+- `manage.py test orders logistics reputation audit dashboard` — comprehensive regression test sweep.
+- `audit/` — immutable events, alerts, exports.
+- `dashboard/` — analytics models + admin panels.
+- `dashboard/api/analytics/` — admin-only insights endpoint.
 
-**Environment Variables**
-| Variable | Required | Description |
-|---|---|---|
-| `DJANGO_SECRET_KEY` | Yes | Django signing secret |
-| `DJANGO_DEBUG` | No | `true/false`, default `false` |
-| `POSTGRES_DB` | Yes | PostgreSQL database name |
-| `POSTGRES_USER` | Yes | PostgreSQL user |
-| `POSTGRES_PASSWORD` | Yes | PostgreSQL password |
-| `POSTGRES_HOST` | Yes | PostgreSQL host |
-| `POSTGRES_PORT` | Yes | PostgreSQL port |
-| `POSTGRES_DRIVER` | Yes | Must be `psycopg2` |
-| `HIBP_ENABLED` | No | Enable HIBP password breach checks |
-| `Q_CLUSTER_WORKERS` | No | Number of async worker processes (default 4) |
+---
 
-**Setup**
-```powershell
-cd backend
-python -m venv venv
-.\venv\Scripts\activate
-python -m pip install -r requirements.txt
-```
+## Developer Notes
+> Keep new schemas connected to the audit hash chain and ensure signal-based logging remains consistent when you introduce new models.
 
-Create `.env` from `.env.example` and set real credentials.
-
-Apply migrations:
-```powershell
-python manage.py migrate
-```
-
-Start background workers:
-```powershell
-python manage.py qcluster
-```
-
-Run server:
-```powershell
-python manage.py runserver
-```
-
-**Docker**
-```powershell
-docker-compose up --build
-```
-
-**API Route Index**
-
-| Domain | Base Path | Key Endpoints |
-|---|---|---|
-| **Identity** | `/api/identity/` | `register/`, `login/`, `verify/` (anomaly check), `refresh/`, `logout/` |
-| **Verification** | `/api/verification/` | `submit/`, `me/`, `admin/pending/`, `admin/review/` |
-| **Marketplace** | `/api/marketplace/` | `crops/`, `products/`, `products/me/`, `products/<id>/` |
-| **Discovery** | `/api/discovery/` | `search/`, `home/` |
-| **Orders** | `/api/orders/` | `POST /`, `GET seller/`, `<id>/confirm/`, `<id>/items/<id>/fulfill/` |
-| **Payments** | `/api/payments/` | `initiate/`, `<id>/release/`, `webhooks/` |
-| **Logistics** | `/api/logistics/` | `shipments/`, `shipments/<id>/assign/`, `confirm-delivery/` |
-| **Reputation** | `/api/reputation/` | `reviews/`, `leaderboard/`, `users/<id>/summary/` |
-| **Audit** | `/api/audit/` | `events/`, `actions/`, `actions/<id>/manage/` |
-| **Dashboard** | `/api/dashboard/` | `stats/` |
-
+Stay professional, keep duplicates normalized, and treat every API as a product-grade contract.

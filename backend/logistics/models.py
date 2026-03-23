@@ -45,7 +45,7 @@ class Shipment(TimestampedModel):
     status = models.CharField(
         max_length=24,
         choices=ShipmentStatus.choices,
-        default=ShipmentStatus.PENDING_ASSIGNMENT,
+        default=ShipmentStatus.CREATED,
     )
     pickup_address = models.CharField(max_length=255)
     delivery_address = models.CharField(max_length=255)
@@ -92,3 +92,104 @@ class Shipment(TimestampedModel):
     def generate_tracking_code():
         """Generate a unique tracking code identifier."""
         return f'TRK-{uuid4().hex[:12].upper()}'
+
+
+class DeliveryPartner(TimestampedModel):
+    """Third-party delivery partner profiles."""
+
+    name = models.CharField(max_length=128)
+    contact_name = models.CharField(max_length=128, blank=True)
+    phone = models.CharField(max_length=32, blank=True)
+    email = models.EmailField(blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'delivery_partners'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class DeliveryRoute(TimestampedModel):
+    """Planned delivery route assigned to a vehicle."""
+
+    route_code = models.CharField(max_length=32, unique=True)
+    delivery_partner = models.ForeignKey(
+        DeliveryPartner,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='routes',
+    )
+    vehicle_identifier = models.CharField(max_length=64)
+    driver_name = models.CharField(max_length=128)
+    capacity = models.PositiveIntegerField(default=4)
+    status = models.CharField(max_length=32, default='planned')
+    estimated_start = models.DateTimeField(null=True, blank=True)
+    estimated_end = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'delivery_routes'
+
+    @staticmethod
+    def generate_route_code():
+        """Generate a short route code."""
+        return f'RTE-{timezone.now().strftime("%Y%m%d")}-{uuid4().hex[:6].upper()}'
+
+    def __str__(self):
+        return self.route_code
+
+
+class ShipmentItem(TimestampedModel):
+    """Route assignment for a shipment."""
+
+    route = models.ForeignKey(
+        DeliveryRoute,
+        on_delete=models.CASCADE,
+        related_name='shipment_items',
+    )
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.PROTECT,
+        related_name='route_items',
+    )
+    sequence = models.PositiveIntegerField(default=0)
+    planned_arrival = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=24,
+        choices=ShipmentStatus.choices,
+        default=ShipmentStatus.ASSIGNED,
+    )
+
+    class Meta:
+        db_table = 'shipment_items'
+        unique_together = ('route', 'shipment')
+        ordering = ['route', 'sequence']
+
+    def __str__(self):
+        return f'{self.route.route_code} - {self.shipment.shipment_reference}'
+
+
+class ShipmentTrackingEvent(TimestampedModel):
+    """GPS/telemetry events for a shipment."""
+
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='tracking_events',
+    )
+    lat = models.DecimalField(max_digits=9, decimal_places=6)
+    lng = models.DecimalField(max_digits=9, decimal_places=6)
+    status = models.CharField(
+        max_length=24,
+        choices=ShipmentStatus.choices,
+    )
+    timestamp = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'shipment_tracking_events'
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f'{self.shipment.shipment_reference} @ {self.timestamp:%Y-%m-%d %H:%M}'

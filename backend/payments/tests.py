@@ -24,28 +24,32 @@ class PaymentsApiTests(APITestCase):
         """Create order and listing fixtures used by payment tests."""
         self.buyer = User.objects.create_user(
             email='buyer@example.com',
-            full_name='Buyer One',
+            first_name='Buyer',
+            last_name='One',
             password='StrongPass123',
             role='buyer',
             is_active=True,
         )
         self.other_buyer = User.objects.create_user(
             email='buyer2@example.com',
-            full_name='Buyer Two',
+            first_name='Buyer',
+            last_name='Two',
             password='StrongPass123',
             role='buyer',
             is_active=True,
         )
         self.seller = User.objects.create_user(
             email='seller@example.com',
-            full_name='Seller One',
+            first_name='Seller',
+            last_name='One',
             password='StrongPass123',
             role='seller',
             is_active=True,
         )
         self.admin_user = User.objects.create_user(
             email='admin@example.com',
-            full_name='Admin One',
+            first_name='Admin',
+            last_name='One',
             password='StrongPass123',
             role='admin',
             is_active=True,

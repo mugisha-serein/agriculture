@@ -2,12 +2,14 @@
 
 from django.urls import path
 
+from logistics.api.views import DeliveryRoutePlanView
 from logistics.api.views import ShipmentAssignView
 from logistics.api.views import ShipmentCancelView
 from logistics.api.views import ShipmentConfirmDeliveryView
 from logistics.api.views import ShipmentDetailView
 from logistics.api.views import ShipmentListCreateView
 from logistics.api.views import ShipmentStatusUpdateView
+from logistics.api.views import ShipmentTrackingEventView
 
 app_name = 'logistics'
 
@@ -22,4 +24,6 @@ urlpatterns = [
         ShipmentConfirmDeliveryView.as_view(),
         name='confirm-delivery',
     ),
+    path('shipments/<int:shipment_id>/tracking/', ShipmentTrackingEventView.as_view(), name='tracking'),
+    path('routes/plan/', DeliveryRoutePlanView.as_view(), name='route-plan'),
 ]

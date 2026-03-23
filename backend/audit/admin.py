@@ -2,6 +2,7 @@
 
 from django.contrib import admin
 
+from audit.models import AuditAlert
 from audit.models import AuditEvent
 from audit.models import AuditRequestAction
 
@@ -102,3 +103,31 @@ class AuditRequestActionAdmin(admin.ModelAdmin):
         'event_hash',
         'occurred_at',
     )
+
+
+@admin.register(AuditAlert)
+class AuditAlertAdmin(admin.ModelAdmin):
+    """Admin interface for audit-triggered alerts."""
+
+    list_display = ('id', 'alert_type', 'severity', 'triggered_at', 'event', 'triggered_by')
+    list_filter = ('alert_type', 'severity')
+    search_fields = ('description', 'event__model_label', 'event__object_pk')
+    ordering = ('-triggered_at',)
+    readonly_fields = (
+        'event',
+        'alert_type',
+        'severity',
+        'description',
+        'context',
+        'triggered_by',
+        'triggered_at',
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

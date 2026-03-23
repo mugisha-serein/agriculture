@@ -16,6 +16,7 @@ from audit.context import get_current_request
 from audit.context import get_current_request_id
 from audit.models import AuditEvent
 from audit.models import AuditRequestAction
+from audit.services.alert_service import AuditAlertService
 
 
 class AuditService:
@@ -68,8 +69,9 @@ class AuditService:
             'metadata': metadata or {},
             'previous_hash': previous_hash,
         }
-        event_hash = self._compute_event_hash(payload=payload)
-        return AuditEvent.objects.create(
+        payload_for_hash = {key: value for key, value in payload.items() if key != 'previous_hash'}
+        event_hash = self._compute_event_hash(payload=payload_for_hash, previous_hash=previous_hash)
+        event_row = AuditEvent.objects.create(
             request_id=payload['request_id'],
             actor=actor,
             actor_email=payload['actor_email'],
@@ -90,6 +92,10 @@ class AuditService:
             previous_hash=payload['previous_hash'],
             event_hash=event_hash,
         )
+        AuditAlertService().notify(event=event_row)
+        return event_row
+        AuditAlertService().notify(event=event_row)
+        return event_row
 
     def serialize_instance(self, instance):
         """Serialize model instance into JSON-safe state mapping."""
@@ -140,9 +146,10 @@ class AuditService:
         payload_for_hash = {
             key: value
             for key, value in payload.items()
-            if key not in {'management_status', 'management_note', 'managed_by', 'managed_at'}
+            if key
+            not in {'management_status', 'management_note', 'managed_by', 'managed_at', 'previous_hash'}
         }
-        event_hash = self._compute_event_hash(payload=payload_for_hash)
+        event_hash = self._compute_event_hash(payload=payload_for_hash, previous_hash=payload['previous_hash'])
         return AuditRequestAction.objects.create(
             request_id=payload['request_id'],
             actor=actor,
@@ -321,7 +328,8 @@ class AuditService:
         except User.DoesNotExist:
             return None
 
-    def _compute_event_hash(self, *, payload):
+    def _compute_event_hash(self, *, payload, previous_hash=''):
         """Compute deterministic hash for event payload integrity."""
         serialized = json.dumps(payload, sort_keys=True, separators=(',', ':'))
-        return hashlib.sha256(serialized.encode('utf-8')).hexdigest()
+        combined = serialized + (previous_hash or '')
+        return hashlib.sha256(combined.encode('utf-8')).hexdigest()
